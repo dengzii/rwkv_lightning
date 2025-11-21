@@ -13,26 +13,28 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model-path", type=str, required=True, help="RWKV model path")
-parser.add_argument("--port", type=int, default=8000)
+parser.add_argument("--model-path", type=str, help="RWKV model path", default="")
+parser.add_argument("--port", type=int, default=9527)
 args_cli = parser.parse_args()
 ROCm_Flag = torch.version.hip is not None
-
-print(f"\n[INFO] Loading RWKV-7 model from {args_cli.model_path}\n")
 
 args = types.SimpleNamespace()
 args.vocab_size = 65536
 args.head_size = 64
-if args_cli.model_path.endswith(".pth"):
-    args.MODEL_NAME = re.sub(r'\.pth$', '', args_cli.model_path)
-else:
-    args.MODEL_NAME = args_cli.model_path
+args.MODEL_NAME = ""
 
-model = RWKV_x070(args)
+model: RWKV_x070|None = None
 tokenizer = TRIE_TOKENIZER("rwkv_batch/rwkv_vocab_v20230424.txt")
 
-print(f"[INFO] Model loaded successfully.\n")
-
+def load(model_path: str):
+    if model_path.endswith(".pth"):
+        args.MODEL_NAME = re.sub(r'\.pth$', '', model_path)
+    else:
+        args.MODEL_NAME = model_path
+    print(f"\n[INFO] Loading RWKV-7 model from {model_path}\n")
+    global model
+    model = RWKV_x070(args)
+    print(f"[INFO] Model loaded successfully.\n")
 
 app = Robyn(__file__)
 @app.after_request()
@@ -46,6 +48,8 @@ def after_request(response):
 @app.options("/v2/chat/completions")
 @app.options("/v3/chat/completions")
 @app.options("/translate/v1/batch-translate")
+@app.options("/status")
+@app.options("/load-model")
 async def handle_options():
     return Response(
         status_code=204,
@@ -961,5 +965,40 @@ async def batch_translate(request):
             headers={"Content-Type": "application/json"}
         )
 
+@app.get("/status")
+async def status():
+    global model
+    return Response(
+        status_code=200,
+        description=json.dumps({"status": "ok", "model_loaded": model is not None, "model_name": args.MODEL_NAME}),
+        headers={"Content-Type": "application/json"}
+    )
+
+@app.post("/load-model")
+async def load_model(request):
+    body = json.loads(request.body)
+    model_path = body.get("model_path", "")
+    if not model_path:
+        return Response(
+            status_code=400,
+            description=json.dumps({"error": "model_path is required"}),
+            headers={"Content-Type": "application/json"}
+        )
+    try:
+        load(model_path)
+        return Response(
+            status_code=200,
+            description=json.dumps({"status": "model loaded successfully"}),
+            headers={"Content-Type": "application/json"}
+        )
+    except Exception as e:
+        return Response(
+            status_code=500,
+            description=json.dumps({"error": str(e)}),
+            headers={"Content-Type": "application/json"}
+        )
+
 if __name__ == "__main__":
+    if args_cli.model_path:
+        load(args_cli.model_path)
     app.start(host="0.0.0.0", port=args_cli.port)
