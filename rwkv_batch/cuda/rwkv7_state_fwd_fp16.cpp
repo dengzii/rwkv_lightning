@@ -23,3 +23,9 @@ TORCH_LIBRARY(rwkv7_state_fwd_fp16, m) {
     m.def("forward_seq", forward_seq);
     m.def("spmv_forward", spmv_forward);
 }
+
+PYBIND11_MODULE(rwkv7_state_fwd_fp16, m) {
+    m.def("forward_one", forward_one);
+    m.def("forward_seq", forward_seq);
+    m.def("spmv_forward", spmv_forward);
+}
